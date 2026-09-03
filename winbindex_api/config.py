@@ -10,6 +10,7 @@ class Settings:
     minimum_scrape_interval_seconds: int
     request_delay_seconds: float
     request_timeout_seconds: float
+    max_concurrent_requests: int = 20
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -23,4 +24,5 @@ class Settings:
             ),
             request_delay_seconds=float(os.getenv("REQUEST_DELAY_SECONDS", "0.1")),
             request_timeout_seconds=float(os.getenv("REQUEST_TIMEOUT_SECONDS", "60")),
+            max_concurrent_requests=int(os.getenv("MAX_CONCURRENT_REQUESTS", "20")),
         )
