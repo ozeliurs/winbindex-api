@@ -3,9 +3,11 @@ import gzip
 import json
 import logging
 import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
+from itertools import islice
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable, Iterator
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
@@ -53,6 +55,41 @@ def _claim_scrape(database: Path, minimum_interval: int, force: bool) -> bool:
     return True
 
 
+def _download_filename(
+    filename: str, settings: Settings
+) -> tuple[str, dict[str, Any]]:
+    encoded = quote(filename, safe="")
+    url = f"{settings.source_url}/by_filename_compressed/{encoded}.json.gz"
+    records = _get_json(url, settings.request_timeout_seconds, compressed=True)
+    if settings.request_delay_seconds:
+        time.sleep(settings.request_delay_seconds)
+    return filename, records
+
+
+def _download_filenames(
+    filenames: Iterable[str], settings: Settings
+) -> Iterator[tuple[str, dict[str, Any]]]:
+    filenames = iter(filenames)
+    with ThreadPoolExecutor(max_workers=settings.max_concurrent_requests) as executor:
+        pending = {
+            executor.submit(_download_filename, filename, settings)
+            for filename in islice(filenames, settings.max_concurrent_requests)
+        }
+        while pending:
+            done, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for future in done:
+                result = future.result()
+                try:
+                    filename = next(filenames)
+                except StopIteration:
+                    pass
+                else:
+                    pending.add(
+                        executor.submit(_download_filename, filename, settings)
+                    )
+                yield result
+
+
 def scrape(settings: Settings, force: bool = False) -> bool:
     if not _claim_scrape(
         settings.database_path, settings.minimum_scrape_interval_seconds, force
@@ -65,12 +102,9 @@ def scrape(settings: Settings, force: bool = False) -> bool:
         with connect(settings.database_path) as connection:
             connection.execute("DROP TABLE IF EXISTS files_next")
             connection.execute("CREATE TABLE files_next AS SELECT * FROM files WHERE 0")
-            for number, filename in enumerate(filenames, start=1):
-                encoded = quote(filename, safe="")
-                url = f"{settings.source_url}/by_filename_compressed/{encoded}.json.gz"
-                records = _get_json(
-                    url, settings.request_timeout_seconds, compressed=True
-                )
+            for number, (filename, records) in enumerate(
+                _download_filenames(filenames, settings), start=1
+            ):
                 rows = []
                 for sha256, details in records.items():
                     info = details.get("fileInfo", {})
@@ -90,8 +124,6 @@ def scrape(settings: Settings, force: bool = False) -> bool:
                 if number % 100 == 0:
                     connection.commit()
                     LOG.info("Downloaded %d/%d filenames", number, len(filenames))
-                if settings.request_delay_seconds:
-                    time.sleep(settings.request_delay_seconds)
             connection.commit()
             connection.execute("BEGIN IMMEDIATE")
             connection.execute("DELETE FROM files")

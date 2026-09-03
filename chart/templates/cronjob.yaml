@@ -24,6 +24,7 @@ spec:
               command: [winbindex-scrape]
               env:
                 - {name: DATABASE_PATH, value: /data/winbindex.db}
+                - {name: MAX_CONCURRENT_REQUESTS, value: {{ .Values.scraper.maxConcurrentRequests | quote }}}
                 - {name: REQUEST_DELAY_SECONDS, value: {{ .Values.scraper.requestDelaySeconds | quote }}}
                 - {name: MINIMUM_SCRAPE_INTERVAL_SECONDS, value: {{ .Values.scraper.minimumIntervalSeconds | quote }}}
               volumeMounts:

@@ -44,9 +44,10 @@ winbindex-scrape
 uvicorn winbindex_api.main:app --reload
 ```
 
-The scraper downloads the filename index and then its compressed per-filename
-documents sequentially. A small configurable delay avoids aggressively requesting
-the upstream service. A successful refresh is staged and swapped into the live
+The scraper downloads the filename index and then fetches up to 20 compressed
+per-filename documents concurrently by default. The concurrency and a small delay
+per worker are configurable to avoid aggressively requesting the upstream service.
+A successful refresh is staged and swapped into the live
 table only after every document has downloaded, so the API retains the previous
 snapshot if a refresh fails.
 
@@ -60,6 +61,7 @@ the seven-day freshness check and should be used sparingly.
 | `DATABASE_PATH` | `/data/winbindex.db` | SQLite database file |
 | `WINBINDEX_SOURCE_URL` | `https://winbindex.m417z.com/data` | Upstream data root |
 | `MINIMUM_SCRAPE_INTERVAL_SECONDS` | `604800` | Minimum successful-refresh interval |
+| `MAX_CONCURRENT_REQUESTS` | `20` | Maximum simultaneous filename requests |
 | `REQUEST_DELAY_SECONDS` | `0.1` | Courtesy delay between filename requests |
 | `REQUEST_TIMEOUT_SECONDS` | `60` | Timeout for each upstream request |
 
