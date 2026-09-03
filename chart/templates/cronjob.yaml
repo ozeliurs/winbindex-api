@@ -1,0 +1,34 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "winbindex-api.fullname" . }}-scraper
+  labels:
+    {{- include "winbindex-api.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.scraper.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            fsGroup: 10001
+          containers:
+            - name: scraper
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: [winbindex-scrape]
+              env:
+                - {name: DATABASE_PATH, value: /data/winbindex.db}
+                - {name: REQUEST_DELAY_SECONDS, value: {{ .Values.scraper.requestDelaySeconds | quote }}}
+                - {name: MINIMUM_SCRAPE_INTERVAL_SECONDS, value: {{ .Values.scraper.minimumIntervalSeconds | quote }}}
+              volumeMounts:
+                - {name: data, mountPath: /data}
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: {{ include "winbindex-api.claimName" . }}
