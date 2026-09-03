@@ -1,0 +1,26 @@
+from dataclasses import dataclass
+from pathlib import Path
+import os
+
+
+@dataclass(frozen=True)
+class Settings:
+    database_path: Path
+    source_url: str
+    minimum_scrape_interval_seconds: int
+    request_delay_seconds: float
+    request_timeout_seconds: float
+
+    @classmethod
+    def from_env(cls) -> "Settings":
+        return cls(
+            database_path=Path(os.getenv("DATABASE_PATH", "/data/winbindex.db")),
+            source_url=os.getenv(
+                "WINBINDEX_SOURCE_URL", "https://winbindex.m417z.com/data"
+            ).rstrip("/"),
+            minimum_scrape_interval_seconds=int(
+                os.getenv("MINIMUM_SCRAPE_INTERVAL_SECONDS", "604800")
+            ),
+            request_delay_seconds=float(os.getenv("REQUEST_DELAY_SECONDS", "0.1")),
+            request_timeout_seconds=float(os.getenv("REQUEST_TIMEOUT_SECONDS", "60")),
+        )

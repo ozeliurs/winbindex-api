@@ -1,0 +1,6 @@
+apiVersion: v2
+name: winbindex-api
+description: Winbindex metadata scraper and query API
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

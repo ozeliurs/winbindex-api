@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "winbindex-api.fullname" . }}
+  labels:
+    {{- include "winbindex-api.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "winbindex-api.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http

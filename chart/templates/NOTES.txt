@@ -1,0 +1,5 @@
+The API is available inside the cluster at:
+  http://{{ include "winbindex-api.fullname" . }}:{{ .Values.service.port }}
+
+The first scheduled scraper run populates the database. Start it immediately with:
+  kubectl create job --from=cronjob/{{ include "winbindex-api.fullname" . }}-scraper {{ include "winbindex-api.fullname" . }}-initial-scrape
