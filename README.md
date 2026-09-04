@@ -47,9 +47,10 @@ uvicorn winbindex_api.main:app --reload
 The scraper downloads the filename index and then fetches up to 20 compressed
 per-filename documents concurrently by default. The concurrency and a small delay
 per worker are configurable to avoid aggressively requesting the upstream service.
-A successful refresh is staged and swapped into the live
-table only after every document has downloaded, so the API retains the previous
-snapshot if a refresh fails.
+Transient upstream failures are retried with exponential backoff. If a filename
+still cannot be downloaded, the refresh continues and retains that filename's
+records from the previous snapshot rather than emptying the cache or failing the
+whole job.
 
 The database records the successful refresh time and refuses another refresh for
 seven days, even if the command is invoked more frequently. It also uses a six-hour
@@ -64,6 +65,8 @@ the seven-day freshness check and should be used sparingly.
 | `MAX_CONCURRENT_REQUESTS` | `20` | Maximum simultaneous filename requests |
 | `REQUEST_DELAY_SECONDS` | `0.1` | Courtesy delay between filename requests |
 | `REQUEST_TIMEOUT_SECONDS` | `60` | Timeout for each upstream request |
+| `REQUEST_MAX_RETRIES` | `3` | Retries after a transient request failure |
+| `REQUEST_RETRY_BACKOFF_SECONDS` | `1` | Initial retry delay (doubled after each failure) |
 
 ## Container image
 
