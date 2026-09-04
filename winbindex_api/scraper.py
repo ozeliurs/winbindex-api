@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from itertools import islice
 from pathlib import Path
 from typing import Any, Iterable, Iterator
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
@@ -18,15 +19,42 @@ LOG = logging.getLogger(__name__)
 USER_AGENT = "winbindex-api/0.1 (+https://github.com/ozeliurs/winbindex-api)"
 
 
-def _get_json(url: str, timeout: float, compressed: bool = False) -> Any:
-    request = Request(
-        url, headers={"User-Agent": USER_AGENT, "Accept-Encoding": "identity"}
-    )
-    with urlopen(request, timeout=timeout) as response:  # noqa: S310
-        payload = response.read()
-    if compressed:
-        payload = gzip.decompress(payload)
-    return json.loads(payload)
+def _get_json(
+    url: str,
+    timeout: float,
+    compressed: bool = False,
+    max_retries: int = 3,
+    retry_backoff: float = 1.0,
+) -> Any:
+    for attempt in range(max_retries + 1):
+        try:
+            request = Request(
+                url, headers={"User-Agent": USER_AGENT, "Accept-Encoding": "identity"}
+            )
+            with urlopen(request, timeout=timeout) as response:  # noqa: S310
+                payload = response.read()
+            if compressed:
+                payload = gzip.decompress(payload)
+            return json.loads(payload)
+        except HTTPError as error:
+            if error.code != 429 and error.code < 500:
+                raise
+            failure = error
+        except (URLError, TimeoutError, gzip.BadGzipFile, json.JSONDecodeError) as error:
+            failure = error
+
+        if attempt == max_retries:
+            raise failure
+        delay = retry_backoff * (2**attempt)
+        LOG.warning(
+            "Request failed (attempt %d/%d); retrying in %.1fs: %s",
+            attempt + 1,
+            max_retries + 1,
+            delay,
+            url,
+        )
+        if delay:
+            time.sleep(delay)
 
 
 def _claim_scrape(database: Path, minimum_interval: int, force: bool) -> bool:
@@ -60,7 +88,13 @@ def _download_filename(
 ) -> tuple[str, dict[str, Any]]:
     encoded = quote(filename, safe="")
     url = f"{settings.source_url}/by_filename_compressed/{encoded}.json.gz"
-    records = _get_json(url, settings.request_timeout_seconds, compressed=True)
+    records = _get_json(
+        url,
+        settings.request_timeout_seconds,
+        compressed=True,
+        max_retries=settings.request_max_retries,
+        retry_backoff=settings.request_retry_backoff_seconds,
+    )
     if settings.request_delay_seconds:
         time.sleep(settings.request_delay_seconds)
     return filename, records
@@ -68,26 +102,40 @@ def _download_filename(
 
 def _download_filenames(
     filenames: Iterable[str], settings: Settings
-) -> Iterator[tuple[str, dict[str, Any]]]:
+) -> Iterator[tuple[str, dict[str, Any] | None]]:
     filenames = iter(filenames)
     with ThreadPoolExecutor(max_workers=settings.max_concurrent_requests) as executor:
-        pending = {
-            executor.submit(_download_filename, filename, settings)
+        future_filenames = {
+            executor.submit(_download_filename, filename, settings): filename
             for filename in islice(filenames, settings.max_concurrent_requests)
         }
+        pending = set(future_filenames)
         while pending:
             done, pending = wait(pending, return_when=FIRST_COMPLETED)
             for future in done:
-                result = future.result()
+                completed_filename = future_filenames.pop(future)
                 try:
                     filename = next(filenames)
                 except StopIteration:
                     pass
                 else:
-                    pending.add(
-                        executor.submit(_download_filename, filename, settings)
+                    next_future = executor.submit(_download_filename, filename, settings)
+                    future_filenames[next_future] = filename
+                    pending.add(next_future)
+                try:
+                    yield future.result()
+                except (
+                    HTTPError,
+                    URLError,
+                    TimeoutError,
+                    gzip.BadGzipFile,
+                    json.JSONDecodeError,
+                ):
+                    LOG.exception(
+                        "Skipping %s after request retries were exhausted",
+                        completed_filename,
                     )
-                yield result
+                    yield completed_filename, None
 
 
 def scrape(settings: Settings, force: bool = False) -> bool:
@@ -97,7 +145,10 @@ def scrape(settings: Settings, force: bool = False) -> bool:
         return False
     try:
         filenames = _get_json(
-            f"{settings.source_url}/filenames.json", settings.request_timeout_seconds
+            f"{settings.source_url}/filenames.json",
+            settings.request_timeout_seconds,
+            max_retries=settings.request_max_retries,
+            retry_backoff=settings.request_retry_backoff_seconds,
         )
         with connect(settings.database_path) as connection:
             connection.execute("DROP TABLE IF EXISTS files_next")
@@ -105,6 +156,12 @@ def scrape(settings: Settings, force: bool = False) -> bool:
             for number, (filename, records) in enumerate(
                 _download_filenames(filenames, settings), start=1
             ):
+                if records is None:
+                    connection.execute(
+                        "INSERT INTO files_next SELECT * FROM files WHERE filename = ?",
+                        (filename,),
+                    )
+                    continue
                 rows = []
                 for sha256, details in records.items():
                     info = details.get("fileInfo", {})
