@@ -28,7 +28,7 @@ persistence:
 
 scraper:
   schedule: "17 3 * * 0"
-  maxConcurrentRequests: "20"
+  maxConcurrentRequests: "100"
   requestDelaySeconds: "0.1"
   minimumIntervalSeconds: "604800"
 
