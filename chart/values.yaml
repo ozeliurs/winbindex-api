@@ -22,7 +22,7 @@ ingress:
 persistence:
   enabled: true
   accessModes: [ReadWriteOnce]
-  size: 40Gi
+  size: 60Gi
   storageClass: ""
   existingClaim: ""
 
